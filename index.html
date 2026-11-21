@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Color Picker</title>
-  <meta name="description" content="HSV / HSL / 相対OKLCH 形式のカラーピッカー">
+  <meta name="description" content="HSV / HSL / OKLCH (相対・絶対) 形式のカラーピッカー">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -15,7 +15,10 @@
       <div class="mode-toggle" role="group" aria-label="カラーモデル">
         <button type="button" data-mode="hsv" aria-pressed="true">HSV</button>
         <button type="button" data-mode="hsl" aria-pressed="false">HSL</button>
-        <button type="button" data-mode="oklch" aria-pressed="false">OKLCH</button>
+        <button type="button" data-mode="oklch" aria-pressed="false"
+                title="相対 OKLCH: 円盤の外周が常に sRGB 内の最大 Chroma">相対OKLCH</button>
+        <button type="button" data-mode="oklch-abs" aria-pressed="false"
+                title="絶対 OKLCH: 同心円が同じ Chroma、輪郭が sRGB ガマットの境界">絶対OKLCH</button>
       </div>
     </header>
 

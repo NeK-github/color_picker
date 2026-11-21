@@ -98,7 +98,7 @@ h1 {
   height: 100%;
 }
 
-/* OKLCH モードでは色相環を使わず、円盤だけを表示する */
+/* OKLCH モード (相対・絶対) では色相環を使わず、円盤だけを表示する */
 .wheel.is-disk #ring-canvas,
 .wheel.is-disk .hue-thumb { display: none; }
 
@@ -179,7 +179,8 @@ button.secondary {
 /* ---- info ---- */
 .info {
   display: flex;
-  gap: 16px;
+  column-gap: 10px;  /* 色表示と数値欄の間 */
+  row-gap: 16px;     /* 狭い画面で縦並びになったときの間隔 */
   margin-top: 20px;
   align-items: flex-start;
 }
@@ -210,7 +211,11 @@ fieldset {
 
 legend {
   float: left;
-  width: 40px;
+  flex-shrink: 0;
+  /* 「相対 / OKLCH」のような長い見出しは 2 行に折り、入力欄との間隔を保つ */
+  width: 48px;
+  white-space: pre-line;
+  line-height: 1.2;
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);

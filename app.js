@@ -5,6 +5,7 @@
   const RING_INNER = 0.84;   // 色相環の内径 (外径は 1)
   const SHAPE_R = 0.78;      // 内側ピッカーの外接円半径
   const DISK_R = 0.97;       // OKLCH 円盤の半径
+  const ABS_C_MAX = 0.33;    // 絶対 OKLCH 円盤の外周に当たる Chroma (sRGB の最大は約 0.322)
   const RING_MID = (RING_INNER + 1) / 2;
   const SQRT3 = Math.sqrt(3);
   const SQ_HALF = SHAPE_R / Math.SQRT2;  // 正方形の半辺
@@ -13,10 +14,12 @@
   // HSV (h, sv, v) / HSL (h, sl, l) / 相対OKLCH (okL, okC, okH) をすべて保持し、
   // 無彩色・黒・白など一方が縮退しても他方の彩度や色相を失わないようにする。
   // okC は「その色相・Lightness で sRGB 内に取り得る最大 Chroma」に対する割合 (0-1)。
+  // okAbsC は絶対 OKLCH モードで指定された Chroma。ガマット外なら実際の色は上限で切られるが、
+  // 値自体は保持するので、Lightness を動かして戻すと元の Chroma に戻る。
   const state = {
     mode: 'hsv',
     h: 0, sv: 1, v: 1, sl: 1, l: 0.5,
-    okL: 0.6, okC: 1, okH: 0,
+    okL: 0.6, okC: 1, okH: 0, okAbsC: 0,
   };
 
   const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -215,6 +218,7 @@
     if (ok.C > 1e-4) state.okH = ok.h;           // 無彩色なら色相を保持
     const cm = maxOkChroma(ok.L, state.okH);
     if (cm > 1e-5) state.okC = clamp(ok.C / cm, 0, 1); // 白・黒なら相対Chromaを保持
+    state.okAbsC = state.okC * cm;
   }
 
   const setHue = (h) => { state.h = h; syncOklch(); };
@@ -222,10 +226,26 @@
   const setHsl = (s, l) => { setHslRaw(s, l); syncOklch(); };
   const setRgb = (rgb255) => { applyRgbToHsv(rgb255.map((x) => x / 255)); syncOklch(); };
 
-  function setOklch(L, c, h) {
+  function applyOklch(L, c, h) {
     state.okL = L; state.okC = c; state.okH = h;
     applyRgbToHsv(oklchToRgbF(L, c * maxOkChroma(L, h), h));
   }
+
+  // 相対 Chroma (0-1) で指定
+  function setOklch(L, c, h) {
+    applyOklch(L, c, h);
+    state.okAbsC = c * maxOkChroma(L, h);
+  }
+
+  // 絶対 Chroma で指定。ガマット外の分は上限で切る
+  function setOklchAbs(L, C, h) {
+    const cm = maxOkChroma(L, h);
+    applyOklch(L, cm > 1e-5 ? clamp(C / cm, 0, 1) : state.okC, h);
+    state.okAbsC = C;
+  }
+
+  // 現在の色の実際の (ガマット内の) 絶対 Chroma
+  const actualOkC = () => state.okC * maxOkChroma(state.okL, state.okH);
 
   // HSV/HSL モードでの (彩度, 明度/輝度)
   const getST = () => (state.mode === 'hsv'
@@ -252,13 +272,24 @@
       },
     },
     oklch: {
-      legend: 'OKLCH', labels: ['L', 'C', 'H'], max: [100, 100, 360], hue: 2,
+      legend: '相対\nOKLCH', labels: ['L', 'C', 'H'], max: [100, 100, 360], hue: 2, disk: 'rel',
       titles: ['Lightness (%)', '相対 Chroma: 最大 Chroma に対する割合 (%)', 'Hue (°)'],
       get: () => [state.okL * 100, state.okC * 100, state.okH],
       set: (i, n) => {
         const a = [state.okL, state.okC, state.okH];
         a[i] = i === 2 ? n : n / 100;
         setOklch(...a);
+      },
+    },
+    'oklch-abs': {
+      legend: '絶対\nOKLCH', labels: ['L', 'C', 'H'], max: [100, 0.4, 360], hue: 2, disk: 'abs',
+      step: [1, 0.001, 1], digits: [0, 3, 0],
+      titles: ['Lightness (%)', 'Chroma (絶対値。sRGB 外の値は上限で切られる)', 'Hue (°)'],
+      get: () => [state.okL * 100, actualOkC(), state.okH],
+      set: (i, n) => {
+        const a = [state.okL, state.okAbsC, state.okH];
+        a[i] = i === 0 ? n / 100 : n;
+        setOklchAbs(...a);
       },
     },
   };
@@ -438,7 +469,11 @@
   for (let i = 0; i < LUT_N; i++) gammaLut[i] = Math.round(linearToSrgb(i / (LUT_N - 1)) * 255);
   const encode = (x) => gammaLut[(clamp(x, 0, 1) * (LUT_N - 1) + 0.5) | 0];
 
-  function drawDisk() {
+  // abs = false: 相対 OKLCH。半径 = 相対 Chroma で、外周が常にガマット境界になる。
+  // abs = true : 絶対 OKLCH。半径 = Chroma の絶対値 (外周 = ABS_C_MAX) で、同心円は同じ Chroma。
+  //              ガマット境界は色相ごとの最大 Chroma を結んだ不定形になる。
+  //              (sRGB の断面は中心から見て星形なので、境界は極座標の 1 本の曲線で表せる)
+  function drawDisk(abs) {
     const N = shapeCanvas.width;
     const R = N / 2;
     const L = state.okL;
@@ -460,7 +495,6 @@
         const x = (px0 + i + 0.5 - R) / rad;
         const dist = Math.hypot(x, y);
         if (dist > 1 + 3 / rad) continue;
-        const rel = Math.min(dist, 1);
         let cos = 1, sin = 0, h = 0;
         if (dist > 0) {
           // 角度 h (上=0, 時計回り) を OKLCH の色相として a = C cos h, b = C sin h
@@ -468,7 +502,16 @@
           h = pointToHue(x, y);
         }
         const fk = (h / 360) * K, k0 = fk | 0, f = fk - k0;
-        const C = rel * (table[k0] * (1 - f) + table[Math.min(k0 + 1, K)] * f);
+        const cmax = table[k0] * (1 - f) + table[Math.min(k0 + 1, K)] * f;
+        let C;
+        if (abs) {
+          // 境界の外側数画素までは境界色で塗り、アンチエイリアスはクリップに任せる
+          C = dist * ABS_C_MAX;
+          if (C > cmax + (3 / rad) * ABS_C_MAX) continue;
+          C = Math.min(C, cmax);
+        } else {
+          C = Math.min(dist, 1) * cmax;
+        }
         const [lr, lg, lb] = oklabToLinear(L, C * cos, C * sin);
         const o = (j * w + i) * 4;
         d[o] = encode(lr); d[o + 1] = encode(lg); d[o + 2] = encode(lb); d[o + 3] = 255;
@@ -476,8 +519,17 @@
     }
 
     shapeCtx.clearRect(0, 0, N, N);
-    const path = (c) => c.arc(R, R, rad, 0, Math.PI * 2);
+    const path = abs
+      ? (c) => {
+        for (let k = 0; k < K; k++) {
+          const p = hueToPoint((k / K) * 360, (table[k] / ABS_C_MAX) * rad);
+          if (k === 0) c.moveTo(R + p.x, R + p.y); else c.lineTo(R + p.x, R + p.y);
+        }
+        c.closePath();
+      }
+      : (c) => c.arc(R, R, rad, 0, Math.PI * 2);
     blitClipped(shapeCtx, img, px0, px0, path);
+    if (abs) drawChromaGuides(R, rad);
     strokeOutline(shapeCtx, path); // L=100% で円盤が白一色になっても輪郭が見える
 
     // 中心 (Chroma 0 のグレー) を、そのグレーで塗った点として強調する
@@ -497,6 +549,24 @@
     shapeCtx.restore();
   }
 
+  // 絶対 OKLCH の目盛り: C = 0.1, 0.2, 0.3 の同心円と、外周 (ABS_C_MAX) の破線
+  function drawChromaGuides(R, rad) {
+    const k = dpr();
+    shapeCtx.save();
+    shapeCtx.lineWidth = Math.max(1, Math.round(k));
+    shapeCtx.strokeStyle = 'rgba(128, 128, 128, 0.35)';
+    for (const C of [0.1, 0.2, 0.3]) {
+      shapeCtx.beginPath();
+      shapeCtx.arc(R, R, (C / ABS_C_MAX) * rad, 0, Math.PI * 2);
+      shapeCtx.stroke();
+    }
+    shapeCtx.setLineDash([4 * k, 4 * k]);
+    shapeCtx.beginPath();
+    shapeCtx.arc(R, R, rad, 0, Math.PI * 2);
+    shapeCtx.stroke();
+    shapeCtx.restore();
+  }
+
   let drawnKey = '';
   let rafId = 0;
   function scheduleDraw() {
@@ -505,9 +575,10 @@
       rafId = 0;
       const N = shapeCanvas.width;
       if (!N) return;
-      const key = state.mode === 'oklch' ? `ok:${state.okL}:${N}` : `${state.mode}:${state.h}:${N}`;
+      const disk = MODES[state.mode].disk;
+      const key = disk ? `${disk}:${state.okL}:${N}` : `${state.mode}:${state.h}:${N}`;
       if (key === drawnKey) return;
-      if (state.mode === 'oklch') drawDisk(); else drawShape();
+      if (disk) drawDisk(disk === 'abs'); else drawShape();
       drawnKey = key;
     });
   }
@@ -527,24 +598,28 @@
     el.style.top = `${50 + p.y * 50}%`;
   };
 
-  // Lightness スライダーの背景 (現在の色相・相対 Chroma のまま L を変えた色)
-  function lightGradient() {
+  // Lightness スライダーの背景 (現在の色相と、相対 Chroma または絶対 Chroma のまま L を変えた色)
+  function lightGradient(abs) {
     const stops = [];
     for (let i = 0; i <= 32; i++) {
       const L = i / 32;
-      const rgb = to255(oklchToRgbF(L, state.okC * maxOkChroma(L, state.okH), state.okH));
+      const cm = maxOkChroma(L, state.okH);
+      const C = abs ? Math.min(state.okAbsC, cm) : state.okC * cm;
+      const rgb = to255(oklchToRgbF(L, C, state.okH));
       stops.push(`${toHex(rgb)} ${(L * 100).toFixed(2)}%`);
     }
     return `linear-gradient(to right, ${stops.join(', ')})`;
   }
 
   const fmt = (x, digits) => Number(x.toFixed(digits)).toString();
+  const roundTo = (x, digits) => (digits ? Number(x.toFixed(digits)) : Math.round(x));
 
   // skip: 入力中のフィールドは上書きしない
   function render(skip) {
     const mode = state.mode;
     const def = MODES[mode];
-    const isOk = mode === 'oklch';
+    const isOk = !!def.disk;
+    const isAbs = def.disk === 'abs';
     const rgb = hsvToRgb(state.h, state.sv, state.v);
     const hex = toHex(rgb);
 
@@ -553,12 +628,13 @@
     okControls.hidden = !isOk;
     cssRow.hidden = !isOk;
     if (isOk) {
-      placeAt(shapeThumb, hueToPoint(state.okH, state.okC * DISK_R));
+      const absC = actualOkC();
+      const radius = isAbs ? Math.min(absC / ABS_C_MAX, 1) : state.okC;
+      placeAt(shapeThumb, hueToPoint(state.okH, radius * DISK_R));
       lightThumb.style.left = `${state.okL * 100}%`;
       lightThumb.style.backgroundColor = hex;
-      lightSlider.style.background = lightGradient();
+      lightSlider.style.background = lightGradient(isAbs);
       lightSlider.setAttribute('aria-valuenow', Math.round(state.okL * 100));
-      const absC = state.okC * maxOkChroma(state.okL, state.okH);
       outCss.value = `oklch(${fmt(state.okL * 100, 2)}% ${fmt(absC, 4)} ${fmt(state.okH, 2)})`;
     } else {
       const st = getST();
@@ -580,10 +656,13 @@
       const isHue = i === def.hue;
       inputs[compKeys[i]].min = isHue ? -1 : 0;
       inputs[compKeys[i]].max = def.max[i];
+      inputs[compKeys[i]].step = def.step ? def.step[i] : 1;
     });
 
     // 数値欄
-    const comps = def.get().map((x, i) => (i === def.hue ? wrapHue(Math.round(x)) : Math.round(x)));
+    const comps = def.get().map((x, i) => (i === def.hue
+      ? wrapHue(Math.round(x))
+      : roundTo(x, def.digits ? def.digits[i] : 0)));
     const values = { c1: comps[0], c2: comps[1], c3: comps[2], r: rgb[0], g: rgb[1], b: rgb[2], hex };
     for (const key in inputs) {
       if (key === skip) continue;
@@ -593,7 +672,11 @@
 
     // アクセシビリティ
     hueThumb.setAttribute('aria-valuenow', Math.round(state.h));
-    if (isOk) {
+    if (isAbs) {
+      shapeThumb.setAttribute('aria-label', '色相とクロマ');
+      shapeThumb.setAttribute('aria-valuetext',
+        `色相 ${Math.round(state.okH)}度、クロマ ${comps[1]}`);
+    } else if (isOk) {
       shapeThumb.setAttribute('aria-label', '色相と相対クロマ');
       shapeThumb.setAttribute('aria-valuetext',
         `色相 ${Math.round(state.okH)}度、相対クロマ ${Math.round(state.okC * 100)}%`);
@@ -648,7 +731,13 @@
     if (dragTarget === 'disk') {
       const x = p.x / DISK_R, y = p.y / DISK_R;
       const dist = Math.hypot(x, y);
-      setOklch(state.okL, clamp(dist, 0, 1), dist > 1e-6 ? pointToHue(x, y) : state.okH);
+      const h = dist > 1e-6 ? pointToHue(x, y) : state.okH;
+      if (MODES[state.mode].disk === 'abs') {
+        // 境界の外を指したら、その色相の最大 Chroma に吸着させる
+        setOklchAbs(state.okL, Math.min(dist * ABS_C_MAX, maxOkChroma(state.okL, h)), h);
+      } else {
+        setOklch(state.okL, clamp(dist, 0, 1), h);
+      }
     } else if (dragTarget === 'hue') {
       setHue(pointToHue(p.x, p.y));
     } else {
@@ -662,7 +751,7 @@
     const p = toNormalized(wheel, e);
     const dist = Math.hypot(p.x, p.y);
     if (dist > 1.05) return; // 円の外 (四隅) は無視
-    if (state.mode === 'oklch') dragTarget = 'disk';
+    if (MODES[state.mode].disk) dragTarget = 'disk';
     else dragTarget = dist >= (RING_INNER + SHAPE_R) / 2 ? 'hue' : 'shape';
     wheel.setPointerCapture(e.pointerId);
     (dragTarget === 'hue' ? hueThumb : shapeThumb).focus({ preventScroll: true });
@@ -679,9 +768,15 @@
   wheel.addEventListener('pointercancel', endDrag);
 
   // ---- ポインタ操作: Lightness スライダー ----
+  // 相対モードでは相対 Chroma を、絶対モードでは指定した絶対 Chroma を保ったまま L を変える
+  function setLight(L) {
+    if (MODES[state.mode].disk === 'abs') setOklchAbs(L, state.okAbsC, state.okH);
+    else setOklch(L, state.okC, state.okH);
+  }
+
   function applyLight(e) {
     const rect = lightSlider.getBoundingClientRect();
-    setOklch(clamp((e.clientX - rect.left) / rect.width, 0, 1), state.okC, state.okH);
+    setLight(clamp((e.clientX - rect.left) / rect.width, 0, 1));
     render();
   }
   lightSlider.addEventListener('pointerdown', (e) => {
@@ -717,7 +812,15 @@
     const keys = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
     const k = keys[e.key];
     if (!k) return;
-    if (state.mode === 'oklch') {
+    const disk = MODES[state.mode].disk;
+    if (disk === 'abs') {
+      // 左右 = 色相 (指定 Chroma を保つ), 上下 = Chroma を 0.005 刻みでガマット内に限って増減
+      const h = wrapHue(Math.round(state.okH) + k[0] * big);
+      const C = k[1]
+        ? clamp(actualOkC() + k[1] * big * 0.005, 0, maxOkChroma(state.okL, h))
+        : state.okAbsC;
+      setOklchAbs(state.okL, C, h);
+    } else if (disk === 'rel') {
       // 左右 = 色相, 上下 = 相対 Chroma
       setOklch(state.okL,
         clamp(state.okC + (k[1] * big) / 100, 0, 1),
@@ -738,7 +841,7 @@
     else if (e.key === 'Home') L = 0;
     else if (e.key === 'End') L = 1;
     else return;
-    setOklch(clamp(L, 0, 1), state.okC, state.okH);
+    setLight(clamp(L, 0, 1));
     render();
     e.preventDefault();
   });

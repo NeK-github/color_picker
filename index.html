@@ -3,26 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HSV Color Picker</title>
-  <meta name="description" content="HSV形式のカラーピッカー">
+  <title>Color Picker</title>
+  <meta name="description" content="HSV / HSL 形式のカラーピッカー">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main class="app">
-    <h1>HSV Color Picker</h1>
-
-    <section class="picker" aria-label="カラーピッカー">
-      <div id="sv" class="sv" role="slider" tabindex="0"
-           aria-label="彩度と明度" aria-valuetext="">
-        <div class="sv-white"></div>
-        <div class="sv-black"></div>
-        <div id="sv-thumb" class="sv-thumb"></div>
+    <header class="header">
+      <h1>Color Picker</h1>
+      <div class="mode-toggle" role="group" aria-label="カラーモデル">
+        <button type="button" data-mode="hsv" aria-pressed="true">HSV</button>
+        <button type="button" data-mode="hsl" aria-pressed="false">HSL</button>
       </div>
+    </header>
 
-      <div id="hue" class="hue" role="slider" tabindex="0"
-           aria-label="色相" aria-valuemin="0" aria-valuemax="360" aria-valuenow="0">
-        <div id="hue-thumb" class="hue-thumb"></div>
-      </div>
+    <section id="wheel" class="wheel" aria-label="カラーピッカー">
+      <canvas id="ring-canvas"></canvas>
+      <canvas id="shape-canvas"></canvas>
+      <div id="hue-thumb" class="thumb hue-thumb" role="slider" tabindex="0"
+           aria-label="色相" aria-valuemin="0" aria-valuemax="360" aria-valuenow="0"></div>
+      <div id="shape-thumb" class="thumb shape-thumb" role="slider" tabindex="0"
+           aria-label="彩度と明度" aria-valuetext=""></div>
     </section>
 
     <section class="info">
@@ -30,10 +32,10 @@
 
       <div class="fields">
         <fieldset>
-          <legend>HSV</legend>
+          <legend id="model-legend">HSV</legend>
           <label>H <input id="in-h" type="number" min="0" max="360" step="1"></label>
           <label>S <input id="in-s" type="number" min="0" max="100" step="1"></label>
-          <label>V <input id="in-v" type="number" min="0" max="100" step="1"></label>
+          <label><span id="label-t">V</span> <input id="in-t" type="number" min="0" max="100" step="1"></label>
         </fieldset>
 
         <fieldset>

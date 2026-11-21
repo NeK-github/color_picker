@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Color Picker</title>
-  <meta name="description" content="HSV / HSL 形式のカラーピッカー">
+  <meta name="description" content="HSV / HSL / 相対OKLCH 形式のカラーピッカー">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -15,6 +15,7 @@
       <div class="mode-toggle" role="group" aria-label="カラーモデル">
         <button type="button" data-mode="hsv" aria-pressed="true">HSV</button>
         <button type="button" data-mode="hsl" aria-pressed="false">HSL</button>
+        <button type="button" data-mode="oklch" aria-pressed="false">OKLCH</button>
       </div>
     </header>
 
@@ -27,15 +28,24 @@
            aria-label="彩度と明度" aria-valuetext=""></div>
     </section>
 
+    <div id="ok-controls" class="ok-controls" hidden>
+      <div id="light-slider" class="light-slider" role="slider" tabindex="0"
+           aria-label="Lightness" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="light-thumb" class="light-thumb"></div>
+      </div>
+      <button id="reset-chroma" type="button" class="secondary"
+              title="Chroma を 0 (同じ Lightness のグレー) にする">C=0</button>
+    </div>
+
     <section class="info">
       <div id="swatch" class="swatch" aria-hidden="true"></div>
 
       <div class="fields">
         <fieldset>
           <legend id="model-legend">HSV</legend>
-          <label>H <input id="in-h" type="number" min="0" max="360" step="1"></label>
-          <label>S <input id="in-s" type="number" min="0" max="100" step="1"></label>
-          <label><span id="label-t">V</span> <input id="in-t" type="number" min="0" max="100" step="1"></label>
+          <label><span id="label-1">H</span> <input id="in-1" type="number" min="-1" max="360" step="1"></label>
+          <label><span id="label-2">S</span> <input id="in-2" type="number" min="0" max="100" step="1"></label>
+          <label><span id="label-3">V</span> <input id="in-3" type="number" min="0" max="100" step="1"></label>
         </fieldset>
 
         <fieldset>
@@ -49,6 +59,11 @@
           <legend>HEX</legend>
           <input id="in-hex" type="text" maxlength="7" spellcheck="false" autocomplete="off">
           <button id="copy" type="button">コピー</button>
+        </fieldset>
+
+        <fieldset id="css-row" class="css-row" hidden>
+          <legend>CSS</legend>
+          <input id="out-css" type="text" readonly aria-label="CSS の oklch() 表記">
         </fieldset>
       </div>
     </section>
